@@ -36,7 +36,7 @@ dependencies = [
     "thinc>=8.3.4,<8.4.0",
     "pip>=25.2",
 ]
-packages=[{include="elysia"}]
+
 
 [project.urls]
 "Homepage" = "https://elysia.weaviate.io"
