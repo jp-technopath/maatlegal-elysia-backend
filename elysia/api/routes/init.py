@@ -19,10 +19,10 @@ async def get_default_config(
     client_manager: ClientManager,
     user_id: str,
     config_collection_name: str = "ELYSIA_CONFIG__",
-) -> Config | None:
+) -> tuple[Config | None, dict | None]:
     async with client_manager.connect_to_async_client() as client:
         if not await client.collections.exists(config_collection_name):
-            return None
+            return None, None
 
         collection = client.collections.get(config_collection_name)
         default_configs = await collection.query.fetch_objects(
@@ -36,16 +36,17 @@ async def get_default_config(
 
         if len(default_configs.objects) > 0:
             default_config: dict = default_configs.objects[0].properties  # type: ignore
+            frontend_config = default_config.get("frontend_config")
             try:
                 default_config["settings"] = decrypt_api_keys(
                     default_config["settings"]
                 )
             except InvalidToken:
                 logger.warning(f"Invalid token for default config, returning None")
-                return None
-            return Config.from_json(default_config)
+                return None, None
+            return Config.from_json(default_config), frontend_config
         else:
-            return None
+            return None, None
 
 
 @router.post("/user/{user_id}")
@@ -74,31 +75,35 @@ async def initialise_user(
                 user_id,
             )  # leave config empty to create defaults for a new user
 
-            # find any default configs
-            if user_manager.users[user_id][
-                "frontend_config"
-            ].save_location_client_manager.is_client:
-                default_config = await get_default_config(
-                    user_manager.users[user_id][
-                        "frontend_config"
-                    ].save_location_client_manager,
-                    user_id,
-                )
-                if default_config:
-                    await user_manager.update_config(
-                        user_id,
-                        config_id=default_config.id,
-                        config_name=default_config.name,
-                        settings=default_config.settings.to_json(),
-                        style=default_config.style,
-                        agent_description=default_config.agent_description,
-                        end_goal=default_config.end_goal,
-                        branch_initialisation=default_config.branch_initialisation,
-                    )
-                    logger.debug("Using default config")
-
-        # if a user exists, get the existing configs
         user = await user_manager.get_user_local(user_id)
+
+        # find any default configs
+        frontend_config_manager = user[
+            "frontend_config"
+        ].save_location_client_manager
+        if frontend_config_manager.is_client:
+            default_config, default_frontend_config = await get_default_config(
+                frontend_config_manager,
+                user_id,
+            )
+            if default_config:
+                await user_manager.update_config(
+                    user_id,
+                    config_id=default_config.id,
+                    config_name=default_config.name,
+                    settings=default_config.settings.to_json(),
+                    style=default_config.style,
+                    agent_description=default_config.agent_description,
+                    end_goal=default_config.end_goal,
+                    branch_initialisation=default_config.branch_initialisation,
+                )
+                if isinstance(default_frontend_config, dict) and default_frontend_config:
+                    await user_manager.update_frontend_config(
+                        user_id,
+                        default_frontend_config,
+                    )
+                logger.debug("Using default config")
+        # if a user exists, get the existing configs
         config = user["tree_manager"].config.to_json()
         frontend_config = user["frontend_config"].to_json()
 
